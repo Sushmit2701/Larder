@@ -39,7 +39,22 @@ Larder.seed = {
       { name: 'Feta', category: 'Dairy & eggs', qty: 200, unit: 'g', expiry: d(4), addedAt: d(-8), usedAt: d(-3) }
     ].map(withId);
 
-    return { version: 2, example: true, pantry, shopping, history, recipes: Larder.seed.recipes(today) };
+    const recipes = Larder.seed.recipes(today);
+    return {
+      version: 3, example: true, pantry, shopping, history, recipes,
+      targets: { ...L.DEFAULT_TARGETS }, log: Larder.seed.log(recipes, today)
+    };
+  },
+
+  // An example breakfast logged for today so the Today tab shows progress.
+  log(recipes, today) {
+    const L = Larder.logic;
+    today = today || L.todayISO();
+    const oats = recipes.find(r => r.title === 'Overnight oats');
+    let s = { log: [] };
+    if (oats) s = L.logRecipe(s, oats, 1, today).state;
+    s = L.logEntry(s, { title: 'Flat white', kcal: 110, protein: 6, carbs: 9, fat: 6 }, today).state;
+    return s.log;
   },
 
   // Example recipes. Macros are rough per-serving figures for illustration.

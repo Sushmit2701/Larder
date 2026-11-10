@@ -2,8 +2,7 @@
 
 A grocery app for personal recipes, suggestions and diet tracking. It runs in your browser, works offline, and needs no account.
 
-**Done so far:** Pantry, Shopping list, and Recipes (with weekend prep notes).
-Next stages: recipe suggestions from what's in the pantry, and daily calorie and protein targets.
+It has four parts: Pantry, Shopping list, Recipes (with suggestions from your pantry and weekend prep notes), and Today (daily calorie and protein targets).
 
 ## Run it
 
@@ -47,6 +46,20 @@ The first time you open the app it loads **example data**, dated from today so y
 - Each recipe can have a weekend prep note: what to chop, cook or portion ahead, and how long it keeps. It's plain text you can edit.
 - Opening a recipe shows its times (prep, cook and total), macros per serving, ingredients, method and prep note.
 - Search matches recipe titles and ingredients.
+
+**Suggestions from your pantry**
+- Each recipe shows how many of its ingredients you have and what's missing. Salt, pepper and water always count as available.
+- Ingredients are matched to pantry items by name: plurals match ("Egg" and "Eggs"), and so does a shorter name inside a longer one ("Rice" matches "Basmati rice").
+- With the **Best match** sort, recipes that use items due within 7 days come first, then the ones that need the least shopping. Items already past their date still count, but rank lower than ones due soon.
+- Filter by total time, protein per serving, or calories per serving. **Fits what I have left today** uses your Today numbers.
+- On a recipe, each ingredient is marked as at home (with its date if it's due soon) or missing. **Add missing to shopping list** adds the missing ones in one tap.
+
+**Today**
+- Set daily calorie and protein targets with **Targets**. The defaults are 2,000 kcal and 120 g of protein.
+- Log a recipe (choose the number of servings) or a quick entry with calories and protein. You can also log a serving from any recipe page.
+- The bars show what you've eaten against each target and how much is left.
+- **Fits the … kcal you have left** lists recipes whose single serving fits in the calories left, highest protein first.
+- Each day starts fresh. Past days stay in the saved data for a history view later.
 
 ## Code layout
 

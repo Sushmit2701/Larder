@@ -5,8 +5,8 @@
 
   let state;
   let view = 'pantry';
-  const VIEWS = ['pantry', 'shopping', 'recipes'];
-  const ui = { q: '', cat: '', rq: '', recipeId: null };
+  const VIEWS = ['pantry', 'shopping', 'recipes', 'today'];
+  const ui = { q: '', cat: '', rq: '', recipeId: null, sort: 'match', maxMin: '', minProtein: '', maxKcal: '' };
   let undoSnapshot = null;
   let toastTimer = null;
   let clearArmed = null;
@@ -20,7 +20,9 @@
   // ---------- state ----------
   function init() {
     const saved = S.load();
-    state = saved ? L.migrate(saved, () => Larder.seed.recipes(today())) : Larder.seed.create(today());
+    state = saved
+      ? L.migrate(saved, { recipes: () => Larder.seed.recipes(today()), log: r => Larder.seed.log(r, today()) })
+      : Larder.seed.create(today());
     state = L.refreshDue(state, today());
     S.save(state);
     const v = S.getPref('view', 'pantry');
@@ -60,7 +62,91 @@
     if (ui.recipeId && !state.recipes.some(r => r.id === ui.recipeId)) ui.recipeId = null;
     $('#main').innerHTML = view === 'pantry' ? renderPantry()
       : view === 'shopping' ? renderShopping()
+      : view === 'today' ? renderToday()
       : ui.recipeId ? renderRecipeDetail(ui.recipeId) : renderRecipes();
+  }
+
+  // ---------- today: targets and food log ----------
+  function meter(label, eaten, target, unit) {
+    if (target == null) return `<div class="meter"><div class="meter-top"><span class="meter-label">${label}</span><span class="meter-nums">${esc(Math.round(eaten))}${unit}</span></div><p class="muted small">No target set.</p></div>`;
+    const left = target - eaten;
+    const pct = target > 0 ? Math.min(100, (eaten / target) * 100) : 100;
+    const over = left < 0;
+    return `<div class="meter ${over ? 'is-over' : ''}">
+      <div class="meter-top">
+        <span class="meter-label">${label}</span>
+        <span class="meter-nums"><strong>${esc(Math.round(eaten))}</strong> / ${esc(target)}${unit}</span>
+      </div>
+      <div class="bar" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="${esc(target)}" aria-valuenow="${esc(Math.round(eaten))}"><span style="width:${pct.toFixed(1)}%"></span></div>
+      <p class="meter-left">${over ? `${esc(Math.round(-left))}${unit} over` : `${esc(Math.round(left))}${unit} left`}</p>
+    </div>`;
+  }
+
+  function renderToday() {
+    const t = today();
+    const totals = L.dayTotals(state.log, t);
+    const tg = state.targets || L.DEFAULT_TARGETS;
+    const left = L.remaining(tg, totals);
+    const fits = L.recipesThatFit(state.recipes, left).slice(0, 5);
+    const recipes = L.sortRecipes(state.recipes);
+    return `${exampleBanner()}
+      <section class="panel today-head" aria-labelledby="today-h">
+        <div class="today-title">
+          <h2 id="today-h">${esc(new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }))}</h2>
+          <button class="btn small" data-action="edit-targets">Targets</button>
+        </div>
+        <div class="meters">
+          ${meter('Calories', totals.kcal, tg.kcal, ' kcal')}
+          ${meter('Protein', totals.protein, tg.protein, ' g')}
+        </div>
+        <form id="targets-form" class="targets-form" hidden>
+          <label class="field"><span>Daily calories</span><input id="t-kcal" type="number" inputmode="numeric" min="0" value="${esc(tg.kcal ?? '')}"></label>
+          <label class="field"><span>Daily protein (g)</span><input id="t-protein" type="number" inputmode="numeric" min="0" value="${esc(tg.protein ?? '')}"></label>
+          <button class="btn primary" type="submit">Save targets</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="eaten-h">
+        <h3 id="eaten-h">Eaten today</h3>
+        ${totals.entries.length ? `<ul class="log">${totals.entries.map(e => `<li>
+            <div class="log-main"><span class="row-name">${esc(e.title)}</span>
+              <span class="row-meta">${esc([e.kind === 'recipe' ? (e.servings === 1 ? '1 serving' : L.qtyLabel({ qty: e.servings }) + ' servings') : '', e.protein + ' g protein', e.carbs ? e.carbs + ' g carbs' : '', e.fat ? e.fat + ' g fat' : ''].filter(Boolean).join(' · '))}</span></div>
+            <span class="log-kcal">${esc(e.kcal)} kcal</span>
+            <button class="icon-btn" data-action="delete-log" data-id="${e.id}" aria-label="Remove ${esc(e.title)}">×</button>
+          </li>`).join('')}</ul>` : '<p class="muted">Nothing logged yet today.</p>'}
+      </section>
+
+      <section class="panel" aria-labelledby="log-h">
+        <h3 id="log-h">Log food</h3>
+        ${recipes.length ? `<form id="log-recipe-form" class="log-form">
+          <label class="field grow"><span>Recipe</span>
+            <select id="lr-recipe">${recipes.map(r => `<option value="${r.id}">${esc(r.title)}</option>`).join('')}</select></label>
+          <label class="field narrow"><span>Servings</span><input id="lr-servings" type="number" inputmode="decimal" min="0.25" step="0.25" value="1"></label>
+          <button class="btn primary" type="submit">Log</button>
+        </form>` : ''}
+        <form id="log-quick-form" class="log-form quick">
+          <label class="field grow"><span>Quick entry</span><input id="lq-title" placeholder="e.g. Protein shake" autocomplete="off"></label>
+          <label class="field narrow"><span>kcal</span><input id="lq-kcal" type="number" inputmode="numeric" min="0"></label>
+          <label class="field narrow"><span>Protein g</span><input id="lq-protein" type="number" inputmode="numeric" min="0"></label>
+          <button class="btn" type="submit">Log</button>
+        </form>
+        <p class="form-error" id="lq-error" hidden>Enter the calories for a quick entry.</p>
+      </section>
+
+      <section aria-labelledby="fit-h" class="fit">
+        <h2 class="list-head" id="fit-h">${left.kcal == null ? 'Highest protein recipes' : left.kcal > 0 ? `Fits the ${esc(Math.round(left.kcal))} kcal you have left` : 'You have reached your calorie target'}</h2>
+        ${fits.length ? `<ul class="list">${fits.map(r => `<li class="row">
+          <button class="row-main" data-action="open-recipe-from-today" data-id="${r.id}">
+            <span class="row-name">${esc(r.title)}</span>
+            <span class="row-meta">${esc([r.macros.kcal + ' kcal', (r.macros.protein ?? 0) + ' g protein', L.formatMinutes(L.totalMinutes(r))].join(' · '))}</span>
+          </button>
+          <button class="btn small" data-action="log-recipe" data-id="${r.id}">Log 1 serving</button>
+        </li>`).join('')}</ul>` : (left.kcal != null && left.kcal > 0 ? '<p class="muted">None of your recipes fit in what is left. Recipes need calories entered to show here.</p>' : '')}
+      </section>`;
+  }
+
+  function logged(next, title) {
+    commit(next, `Logged ${title}`, { undoable: true });
   }
 
   // ---------- recipes ----------
@@ -76,27 +162,67 @@
         <input id="recipe-search" type="search" placeholder="Search recipes or ingredients" value="${esc(ui.rq)}" aria-label="Search recipes" autocomplete="off">
         <button class="btn primary" data-action="new-recipe">Add recipe</button>
       </div>
+      <div class="filters" role="group" aria-label="Filter recipes">
+        ${filterSelect('f-sort', 'Sort', ui.sort, [['match', 'Best match for my pantry'], ['az', 'A to Z']])}
+        ${filterSelect('f-time', 'Time', ui.maxMin, [['', 'Any time'], ['15', '15 min or less'], ['30', '30 min or less'], ['45', '45 min or less'], ['60', '1 hr or less']])}
+        ${filterSelect('f-protein', 'Protein', ui.minProtein, [['', 'Any protein'], ['20', '20 g or more'], ['30', '30 g or more'], ['40', '40 g or more']])}
+        ${filterSelect('f-kcal', 'Calories', ui.maxKcal, [['', 'Any calories'], ['left', 'Fits what I have left today'], ['400', '400 kcal or less'], ['500', '500 kcal or less'], ['600', '600 kcal or less']])}
+      </div>
       <ul class="list" id="recipe-list">${renderRecipeRows(q)}</ul>`;
+  }
+
+  function filterSelect(id, label, value, options) {
+    return `<label class="filter"><span>${label}</span><select id="${id}">${options.map(([v, l]) => `<option value="${v}" ${String(value) === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  }
+
+  function currentFilters() {
+    let maxKcal = Number(ui.maxKcal) || null;
+    if (ui.maxKcal === 'left') {
+      const left = L.remaining(state.targets || L.DEFAULT_TARGETS, L.dayTotals(state.log, today()));
+      maxKcal = left.kcal == null ? null : Math.max(0, left.kcal);
+      if (maxKcal === 0) maxKcal = -1; // nothing fits once the target is reached
+    }
+    return { maxMin: Number(ui.maxMin) || null, minProtein: Number(ui.minProtein) || null, maxKcal };
+  }
+
+  function shortList(names, n) {
+    if (names.length <= n) return names.join(', ');
+    return names.slice(0, n).join(', ') + ' and ' + (names.length - n) + ' more';
   }
 
   function renderRecipeRows(q) {
     if (!state.recipes.length) return `<li class="empty">No recipes yet. Add your first one with its ingredients, method and macros.</li>`;
-    const list = L.sortRecipes(state.recipes).filter(r => !q
+    const t = today();
+    const f = currentFilters();
+    let ranked = L.rankRecipes(state.recipes, state.pantry, t);
+    if (ui.sort === 'az') ranked = ranked.sort((a, b) => a.recipe.title.localeCompare(b.recipe.title));
+    const list = ranked.filter(({ recipe: r }) => (!q
       || r.title.toLowerCase().includes(q)
-      || r.ingredients.some(i => i.name.toLowerCase().includes(q)));
-    if (!list.length) return `<li class="empty">No recipes match that search.</li>`;
-    return list.map(r => `<li class="row">
+      || r.ingredients.some(i => i.name.toLowerCase().includes(q)))
+      && (f.maxKcal === -1 ? false : L.passesFilters(r, f)));
+    if (!list.length) return `<li class="empty">No recipes match. Try fewer filters.</li>`;
+    return list.map(({ recipe: r, match: m }) => {
+      const all = m.total && !m.missing.length;
+      const soonNames = [...new Set(m.soon.map(i => i.name))];
+      return `<li class="row recipe-row">
       <button class="row-main" data-action="open-recipe" data-id="${r.id}">
         <span class="row-name">${esc(r.title)}</span>
-        <span class="row-meta">${esc([L.formatMinutes(L.totalMinutes(r)), 'Serves ' + r.servings, r.ingredients.length + ' ingredients'].join(' · '))}</span>
+        <span class="row-meta">${esc([L.formatMinutes(L.totalMinutes(r)), 'Serves ' + r.servings, macroText(r)].filter(Boolean).join(' · '))}</span>
+        <span class="match">
+          <span class="have-count ${all ? 'is-all' : ''}">${all ? 'You have everything' : `Have ${m.haveCount} of ${m.total}`}</span>
+          ${m.missing.length ? `<span class="missing">Missing: ${esc(shortList(m.missing.map(i => i.name.toLowerCase()), 3))}</span>` : ''}
+        </span>
+        ${soonNames.length ? `<span class="uses-soon">Uses up ${esc(shortList(soonNames.map(n => n.toLowerCase()), 2))}</span>` : ''}
       </button>
-      ${macroText(r) ? `<span class="macro-tag">${esc(macroText(r))}</span>` : ''}
-    </li>`).join('');
+      <span class="ratio" aria-hidden="true"><svg viewBox="0 0 36 36" width="36" height="36"><circle cx="18" cy="18" r="15" class="ratio-bg"/><circle cx="18" cy="18" r="15" class="ratio-fg" stroke-dasharray="${(m.total ? (m.haveCount / m.total) * 94.25 : 0).toFixed(2)} 94.25" transform="rotate(-90 18 18)"/></svg></span>
+    </li>`;
+    }).join('');
   }
 
   function renderRecipeDetail(id) {
     const r = state.recipes.find(x => x.id === id);
     const m = r.macros || {};
+    const match = L.recipeMatch(r, state.pantry, today());
     const fig = (v, unit, label) => `<div class="macro"><span class="macro-n">${v == null ? '–' : esc(v)}<small>${v == null ? '' : unit}</small></span><span class="macro-l">${label}</span></div>`;
     return `<article class="recipe">
       <div class="recipe-nav">
@@ -118,9 +244,21 @@
           ${fig(m.kcal, '', 'kcal')}${fig(m.protein, ' g', 'protein')}${fig(m.carbs, ' g', 'carbs')}${fig(m.fat, ' g', 'fat')}
         </div>
       </section>
+      <div class="recipe-actions">
+        <button class="btn primary" data-action="log-recipe" data-id="${r.id}">Log 1 serving today</button>
+        ${match.missing.length ? `<button class="btn" data-action="add-missing" data-id="${r.id}">Add ${match.missing.length} missing to shopping list</button>` : ''}
+      </div>
       <section class="panel" aria-labelledby="ing-h">
-        <h3 id="ing-h">Ingredients</h3>
-        ${r.ingredients.length ? `<ul class="ingredients">${r.ingredients.map(i => `<li><span class="ing-qty">${esc(L.qtyLabel(i))}</span><span>${esc(i.name)}</span></li>`).join('')}</ul>` : '<p class="muted">No ingredients added.</p>'}
+        <h3 id="ing-h">Ingredients <span class="h3-note">${match.total ? (match.missing.length ? `You have ${match.haveCount} of ${match.total}` : 'You have everything') : ''}</span></h3>
+        ${r.ingredients.length ? `<ul class="ingredients">${r.ingredients.map(i => {
+          const h = match.have.find(x => x.ing === i);
+          const staple = match.staples.includes(i);
+          const st = h ? L.expiryStatus(h.item.expiry, today()) : '';
+          const status = staple ? '<span class="ing-status muted">Cupboard staple</span>'
+            : h ? `<span class="ing-status have">At home${h.item.name.toLowerCase() !== i.name.toLowerCase() ? ': ' + esc(h.item.name) : ''}${st === 'soon' || st === 'expired' ? ' · ' + pill(h.item.expiry) : ''}</span>`
+            : '<span class="ing-status missing">Missing</span>';
+          return `<li class="${h || staple ? 'is-have' : 'is-missing'}"><span class="ing-qty">${esc(L.qtyLabel(i))}</span><span class="ing-name">${esc(i.name)}${status}</span></li>`;
+        }).join('')}</ul>` : '<p class="muted">No ingredients added.</p>'}
       </section>
       <section class="panel" aria-labelledby="method-h">
         <h3 id="method-h">Method</h3>
@@ -498,6 +636,30 @@
         case 'edit-recipe': openRecipeEditor(id); break;
         case 'open-recipe': ui.recipeId = id; render(); window.scrollTo(0, 0); break;
         case 'back-recipes': ui.recipeId = null; render(); window.scrollTo(0, 0); break;
+        case 'open-recipe-from-today':
+          view = 'recipes'; ui.recipeId = id; S.setPref('view', view); render(); window.scrollTo(0, 0); break;
+        case 'add-missing': {
+          const r = state.recipes.find(x => x.id === id);
+          const res = L.addMissingToShopping(state, r, today());
+          commit(res.state, `Added ${res.added} ${res.added === 1 ? 'item' : 'items'} to the shopping list`, { undoable: true });
+          break;
+        }
+        case 'log-recipe': {
+          const r = state.recipes.find(x => x.id === id);
+          logged(L.logRecipe(state, r, 1, today()).state, r.title);
+          break;
+        }
+        case 'delete-log': {
+          const e = state.log.find(x => x.id === id);
+          commit(L.deleteLogEntry(state, id), `Removed ${e.title}`, { undoable: true });
+          break;
+        }
+        case 'edit-targets': {
+          const f = $('#targets-form');
+          f.hidden = !f.hidden;
+          if (!f.hidden) $('#t-kcal').focus();
+          break;
+        }
         case 'use': {
           const item = state.pantry.find(p => p.id === id);
           commit(L.markUsed(state, id, today()), `${item.name} used up`, { undoable: true });
@@ -539,8 +701,32 @@
     });
     main.addEventListener('change', e => {
       if (e.target.id === 'pantry-cat') { ui.cat = e.target.value; $('#pantry-list').innerHTML = renderPantryRows(); }
+      const filterKeys = { 'f-sort': 'sort', 'f-time': 'maxMin', 'f-protein': 'minProtein', 'f-kcal': 'maxKcal' };
+      if (filterKeys[e.target.id]) {
+        ui[filterKeys[e.target.id]] = e.target.value;
+        $('#recipe-list').innerHTML = renderRecipeRows(ui.rq.trim().toLowerCase());
+      }
     });
     main.addEventListener('submit', e => {
+      if (e.target.id === 'targets-form') {
+        e.preventDefault();
+        commit(L.setTargets(state, { kcal: $('#t-kcal').value, protein: $('#t-protein').value }), 'Targets saved');
+        return;
+      }
+      if (e.target.id === 'log-recipe-form') {
+        e.preventDefault();
+        const r = state.recipes.find(x => x.id === $('#lr-recipe').value);
+        if (r) logged(L.logRecipe(state, r, $('#lr-servings').value, today()).state, r.title);
+        return;
+      }
+      if (e.target.id === 'log-quick-form') {
+        e.preventDefault();
+        const kcal = $('#lq-kcal').value;
+        if (kcal === '') { $('#lq-error').hidden = false; $('#lq-kcal').focus(); return; }
+        const title = $('#lq-title').value.trim() || 'Quick entry';
+        logged(L.logEntry(state, { title, kcal, protein: $('#lq-protein').value }, today()).state, title);
+        return;
+      }
       if (e.target.id !== 'quick-add') return;
       e.preventDefault();
       const input = $('#quick-add-input');
@@ -558,7 +744,8 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       const next = L.refreshDue(state, today());
-      if (next !== state) { state = next; persist(); render(); }
+      if (next !== state) { state = next; persist(); }
+      render(); // a new day resets the Today tab
     });
   }
 

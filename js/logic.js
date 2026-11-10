@@ -106,7 +106,7 @@ Larder.logic = (function () {
     ['Meat & fish', ['chicken', 'beef', 'pork', 'lamb', 'mince', 'bacon', 'sausage', 'salmon', 'tuna', 'fish', 'prawn', 'shrimp', 'turkey', 'ham', 'cod', 'steak', 'tofu']],
     ['Dairy & eggs', ['milk', 'yoghurt', 'yogurt', 'cheese', 'cheddar', 'feta', 'butter', 'cream', 'egg', 'paneer', 'mozzarella', 'parmesan', 'halloumi']],
     ['Fruit & veg', ['apple', 'banana', 'berr', 'blueberr', 'strawberr', 'grape', 'lemon', 'lime', 'orange', 'pear', 'spinach', 'lettuce', 'salad', 'tomato', 'cherry tomato', 'onion', 'garlic', 'potato', 'sweet potato', 'carrot', 'pepper', 'broccoli', 'cucumber', 'avocado', 'mushroom', 'courgette', 'zucchini', 'kale', 'herb', 'coriander', 'parsley', 'basil', 'ginger', 'celery', 'leek', 'cabbage', 'fruit', 'veg', 'kiwi', 'mango']],
-    ['Cupboard', ['rice', 'basmati', 'pasta', 'spaghetti', 'oat', 'rolled oat', 'flour', 'sugar', 'cereal', 'granola', 'noodle', 'quinoa', 'oil', 'olive oil', 'vinegar', 'spice', 'salt', 'stock', 'honey', 'nut', 'coffee', 'tea']],
+    ['Cupboard', ['rice', 'basmati', 'pasta', 'spaghetti', 'oat', 'rolled oat', 'flour', 'sugar', 'cereal', 'granola', 'noodle', 'quinoa', 'oil', 'olive oil', 'vinegar', 'spice', 'salt', 'stock', 'honey', 'nut', 'coffee', 'tea', 'powder', 'oregano', 'dried', 'cumin', 'paprika', 'chilli flakes']],
     ['Bakery', ['bread', 'loaf', 'bagel', 'wrap', 'tortilla', 'pitta', 'pita', 'roll', 'croissant', 'sourdough', 'bun', 'wholemeal']],
     ['Drinks', ['juice', 'water', 'soda', 'beer', 'wine', 'cola', 'kombucha']],
     ['Snacks', ['crisps', 'chips', 'biscuit', 'cookie', 'chocolate', 'snack', 'popcorn', 'crackers']]
@@ -344,14 +344,130 @@ Larder.logic = (function () {
     return [...list].sort((a, b) => a.title.localeCompare(b.title));
   }
 
+  // ---------- matching recipes to the pantry ----------
+  // Things most kitchens always have; they never count as missing.
+  const STAPLES = ['salt', 'pepper', 'black pepper', 'salt and pepper', 'water', 'ice'];
+  function isStaple(name) {
+    const v = nameVariants(name);
+    return STAPLES.some(s => v.has(s));
+  }
+  function words(name) {
+    return String(name).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
+      .map(w => (w.endsWith('es') && w.length > 4 ? w.slice(0, -2) : w.endsWith('s') && w.length > 3 ? w.slice(0, -1) : w));
+  }
+  // Exact name first ("Eggs" = "Egg"), then every word of one name inside the other ("Rice" ~ "Basmati rice").
+  function matchIngredient(name, pantry) {
+    const exact = pantry.filter(p => sameItem(p.name, name));
+    const pool = exact.length ? exact : pantry.filter(p => {
+      const a = words(name), b = words(p.name);
+      if (!a.length || !b.length) return false;
+      const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+      return short.every(w => long.includes(w));
+    });
+    return sortByExpiry(pool)[0] || null;
+  }
+  function recipeMatch(recipe, pantry, today) {
+    const have = [], missing = [], staples = [];
+    let urgency = 0;
+    const soon = [];
+    recipe.ingredients.forEach(ing => {
+      if (isStaple(ing.name)) { staples.push(ing); return; }
+      const item = matchIngredient(ing.name, pantry);
+      if (!item) { missing.push(ing); return; }
+      have.push({ ing, item });
+      const n = daysUntil(item.expiry, today);
+      if (n !== null && n <= 7) {
+        urgency += n < 0 ? 4 : 8 - n; // past-date items still count, but less than ones due tomorrow
+        soon.push(item);
+      }
+    });
+    const total = have.length + missing.length;
+    return { have, missing, staples, total, haveCount: have.length, urgency, soon };
+  }
+  // Recipes that use food about to go off come first, then the ones you can cook with least shopping.
+  function rankRecipes(recipes, pantry, today) {
+    return recipes.map(recipe => ({ recipe, match: recipeMatch(recipe, pantry, today) }))
+      .sort((a, b) => {
+        if (b.match.urgency !== a.match.urgency) return b.match.urgency - a.match.urgency;
+        const fa = a.match.total ? a.match.haveCount / a.match.total : 0;
+        const fb = b.match.total ? b.match.haveCount / b.match.total : 0;
+        if (fb !== fa) return fb - fa;
+        if (a.match.missing.length !== b.match.missing.length) return a.match.missing.length - b.match.missing.length;
+        return a.recipe.title.localeCompare(b.recipe.title);
+      });
+  }
+  // filters: { maxMin, minProtein, maxKcal } — any left empty is ignored.
+  function passesFilters(recipe, f) {
+    const m = recipe.macros || {};
+    if (f.maxMin && totalMinutes(recipe) > f.maxMin) return false;
+    if (f.minProtein && !(m.protein >= f.minProtein)) return false;
+    if (f.maxKcal && !(m.kcal != null && m.kcal <= f.maxKcal)) return false;
+    return true;
+  }
+  function addMissingToShopping(state, recipe, today) {
+    const m = recipeMatch(recipe, state.pantry, today);
+    let next = state, added = 0;
+    m.missing.forEach(ing => {
+      const r = addShoppingItem(next, { name: ing.name, qty: null, unit: '', category: guessCategory(ing.name) });
+      next = r.state; added++;
+    });
+    return { state: next, added };
+  }
+
+  // ---------- daily targets and food log ----------
+  const DEFAULT_TARGETS = { kcal: 2000, protein: 120 };
+  function setTargets(state, t) {
+    const n = v => (v === '' || v === null || isNaN(Number(v)) ? null : Math.max(0, Number(v)));
+    return { ...state, targets: { kcal: n(t.kcal), protein: n(t.protein) } };
+  }
+  function logEntry(state, entry, today) {
+    const n = v => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? 0 : Number(v));
+    const e = {
+      id: uid(), date: today || todayISO(), at: Date.now(),
+      kind: entry.kind || 'quick', recipeId: entry.recipeId || null,
+      title: String(entry.title || 'Quick entry').trim(),
+      servings: n(entry.servings) || 1,
+      kcal: n(entry.kcal), protein: n(entry.protein), carbs: n(entry.carbs), fat: n(entry.fat)
+    };
+    return { state: { ...state, log: [...state.log, e] }, id: e.id };
+  }
+  function logRecipe(state, recipe, servings, today) {
+    const s = Number(servings) || 1;
+    const m = recipe.macros || {};
+    const x = v => Math.round((Number(v) || 0) * s);
+    return logEntry(state, { kind: 'recipe', recipeId: recipe.id, title: recipe.title, servings: s, kcal: x(m.kcal), protein: x(m.protein), carbs: x(m.carbs), fat: x(m.fat) }, today);
+  }
+  function deleteLogEntry(state, id) {
+    return { ...state, log: state.log.filter(e => e.id !== id) };
+  }
+  function dayTotals(log, date) {
+    const entries = log.filter(e => e.date === date).sort((a, b) => a.at - b.at);
+    const sum = k => entries.reduce((t, e) => t + (Number(e[k]) || 0), 0);
+    return { entries, kcal: sum('kcal'), protein: sum('protein'), carbs: sum('carbs'), fat: sum('fat') };
+  }
+  function remaining(targets, totals) {
+    return {
+      kcal: targets.kcal == null ? null : targets.kcal - totals.kcal,
+      protein: targets.protein == null ? null : targets.protein - totals.protein
+    };
+  }
+  // Recipes whose one serving fits in the calories left, most protein first.
+  function recipesThatFit(recipes, left) {
+    return recipes
+      .filter(r => r.macros && r.macros.kcal != null && (left.kcal == null || r.macros.kcal <= left.kcal))
+      .sort((a, b) => (b.macros.protein || 0) - (a.macros.protein || 0) || a.macros.kcal - b.macros.kcal);
+  }
+
   function emptyState() {
-    return { version: 2, example: false, pantry: [], history: [], shopping: [], recipes: [] };
+    return { version: 3, example: false, pantry: [], history: [], shopping: [], recipes: [], targets: { ...DEFAULT_TARGETS }, log: [] };
   }
   // Brings data saved by an older version up to date.
-  function migrate(state, exampleRecipes) {
+  function migrate(state, examples) {
     let s = { ...emptyState(), ...state };
-    if (!Array.isArray(state.recipes)) s.recipes = s.example && exampleRecipes ? exampleRecipes() : [];
-    s.version = 2;
+    if (!Array.isArray(state.recipes)) s.recipes = s.example && examples ? examples.recipes() : [];
+    if (!state.targets) s.targets = { ...DEFAULT_TARGETS };
+    if (!Array.isArray(state.log)) s.log = s.example && examples ? examples.log(s.recipes) : [];
+    s.version = 3;
     return s;
   }
 
@@ -363,6 +479,8 @@ Larder.logic = (function () {
     parseListLine, parseList, parseIngredients, parseSteps,
     qtyLabel, ingredientLine, formatMinutes, totalMinutes, frequencyOf, dueDate, sortShopping,
     addRecipe, updateRecipe, deleteRecipe, sortRecipes, migrate,
+    isStaple, matchIngredient, recipeMatch, rankRecipes, passesFilters, addMissingToShopping,
+    DEFAULT_TARGETS, setTargets, logEntry, logRecipe, deleteLogEntry, dayTotals, remaining, recipesThatFit,
     addPantryItem, updatePantryItem, deletePantryItem, markUsed, restoreUsed,
     addShoppingItem, updateShoppingItem, deleteShoppingItem, buyShoppingItem,
     refreshDue, emptyState
