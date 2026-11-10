@@ -222,3 +222,49 @@ dialog::backdrop { background: rgba(10, 16, 13, .45); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---------- recipes ---------- */
+dialog { overflow: auto; }
+.macro-tag { flex: none; font-size: .75rem; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; max-width: 40%; }
+.recipe { display: flex; flex-direction: column; gap: 14px; }
+.recipe-nav { display: flex; justify-content: space-between; gap: 8px; }
+.recipe-head { display: flex; flex-direction: column; gap: 12px; }
+.recipe-head h2 { margin: 0; font: 700 1.75rem/1.15 var(--font-display); letter-spacing: -.01em; text-wrap: balance; overflow-wrap: anywhere; }
+.times { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.times > div { padding: 10px 12px; border-left: 1px solid var(--line); min-width: 0; }
+.times > div:first-child { border-left: 0; }
+.times dt { font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.times dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.times .total dd { color: var(--accent); }
+.panel { padding: 14px 16px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+.panel h3 { margin: 0 0 10px; font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.panel p { margin: 0; max-width: 65ch; }
+.macros { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.macro { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.macro-n { font: 700 var(--step-2)/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+.macro-n small { font-size: .6em; font-weight: 600; color: var(--muted); }
+.macro-l { font-size: var(--step--1); color: var(--muted); }
+.ingredients { list-style: none; margin: 0; padding: 0; }
+.ingredients li { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); }
+.ingredients li:first-child { border-top: 0; padding-top: 0; }
+.ing-qty { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600; }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 12px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; max-width: 65ch; }
+.steps li::before { content: counter(step); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: var(--step--1); }
+.prep { background: var(--accent-soft); border-color: transparent; }
+.prep h3 { color: var(--accent); }
+.field-row.three > .field, .field-row.four > .field { flex: 1 1 0; }
+.field-row.four { flex-wrap: wrap; }
+.field-row.four > .field { flex: 1 1 calc(50% - 12px); }
+.field-group { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.field-group legend { padding: 0; margin-bottom: 8px; font-size: var(--step--1); font-weight: 700; }
+
+@media (max-width: 420px) {
+  .brand { font-size: 1.25rem; }
+  .tab { padding: 0 10px; gap: 4px; }
+  .times { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .times > div:nth-child(3) { border-left: 0; }
+  .times > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .macros { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+  .ingredients li { grid-template-columns: 5.5rem minmax(0, 1fr); }
+}

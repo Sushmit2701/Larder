@@ -10,7 +10,7 @@ Larder.logic = (function () {
     'Tins & jars', 'Frozen', 'Drinks', 'Snacks', 'Household', 'Other'
   ];
 
-  const UNITS = ['', 'g', 'kg', 'ml', 'L', 'pcs', 'pack', 'tin', 'jar', 'bottle', 'bag', 'loaf', 'bunch', 'dozen'];
+  const UNITS = ['', 'g', 'kg', 'ml', 'L', 'pcs', 'pack', 'tin', 'jar', 'bottle', 'bag', 'loaf', 'bunch', 'dozen', 'tbsp', 'tsp', 'cup', 'clove', 'slice', 'handful', 'pinch'];
 
   const FREQUENCIES = [
     { id: 'weekly', label: 'Weekly', short: 'Weekly', days: 7 },
@@ -133,11 +133,11 @@ Larder.logic = (function () {
       .replace(/\(?\s*(every|each)?\s*((\d|two)\s*(-|–|to)\s*(\d|three)|2|two|1)\s*w(ee)?ks?\b\s*\)?/ig, ' ')
       .replace(/\(?\s*(fortnightly|fortnight|bi-?weekly|weekly|every\s+week|each\s+week)\s*\)?/ig, ' ');
   }
-  const UNIT_RE = '(kg|g|ml|l|pcs?|packs?|tins?|cans?|jars?|bottles?|bags?|dozen|loaf|loaves|bunch(?:es)?|x)';
+  const UNIT_RE = '(kg|g|ml|l|tbsps?|tsps?|cups?|cloves?|pinch(?:es)?|handfuls?|slices?|pcs?|packs?|tins?|cans?|jars?|bottles?|bags?|dozen|loaf|loaves|bunch(?:es)?|x)';
   function normUnit(u) {
     if (!u) return '';
     u = u.toLowerCase();
-    const map = { l: 'L', x: '', pc: 'pcs', pcs: 'pcs', can: 'tin', cans: 'tin', loaves: 'loaf', bunches: 'bunch' };
+    const map = { l: 'L', x: '', pc: 'pcs', pcs: 'pcs', can: 'tin', cans: 'tin', loaves: 'loaf', bunches: 'bunch', pinches: 'pinch' };
     if (u in map) return map[u];
     return u.endsWith('s') ? u.slice(0, -1) : u;
   }
@@ -153,29 +153,82 @@ Larder.logic = (function () {
       .replace(/\s[-–—]\s/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    let qty = null, unit = '', m;
-    m = text.match(new RegExp('^(\\d+(?:\\.\\d+)?)\\s*' + UNIT_RE + '?\\b\\s*(?:of\\s+)?(.+)$', 'i'));
-    if (m) {
-      qty = Number(m[1]); unit = normUnit(m[2]); text = m[3];
-    } else {
-      m = text.match(new RegExp('^(.+?)\\s+(?:x\\s*)?(\\d+(?:\\.\\d+)?)\\s*' + UNIT_RE + '?$', 'i'));
-      if (m) { text = m[1]; qty = Number(m[2]); unit = normUnit(m[3]); }
-    }
-    text = text.replace(/[-–—]+$/, '').trim();
-    if (!text) return null;
-    const name = text.charAt(0).toUpperCase() + text.slice(1);
-    return { name, qty, unit, frequency, category: guessCategory(name) };
+    const q = splitQty(text);
+    if (!q) return null;
+    return { name: q.name, qty: q.qty, unit: q.unit, frequency, category: guessCategory(q.name) };
   }
   function parseList(block) {
     return String(block).split(/\r?\n/).map(parseListLine).filter(Boolean);
   }
 
+  // Pulls a quantity and unit off the front or end of a line: "200 g spinach", "Eggs x12", "½ tsp salt".
+  const NUM_RE = '(\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[½¼¾⅓⅔])';
+  const FRACTIONS = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3 };
+  function toNumber(s) {
+    s = s.trim();
+    if (s in FRACTIONS) return FRACTIONS[s];
+    const mixed = s.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+    if (mixed) return Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3]);
+    const frac = s.match(/^(\d+)\/(\d+)$/);
+    if (frac) return Number(frac[1]) / Number(frac[2]);
+    return Number(s);
+  }
+  function splitQty(text) {
+    text = String(text).replace(/\s+/g, ' ').trim();
+    let qty = null, unit = '', m;
+    m = text.match(new RegExp('^' + NUM_RE + '\\s*' + UNIT_RE + '?\\b\\s*(?:of\\s+)?(.+)$', 'i'));
+    if (m) {
+      qty = toNumber(m[1]); unit = normUnit(m[2]); text = m[3];
+    } else {
+      m = text.match(new RegExp('^(.+?)\\s+(?:x\\s*)?' + NUM_RE + '\\s*' + UNIT_RE + '?$', 'i'));
+      if (m) { text = m[1]; qty = toNumber(m[2]); unit = normUnit(m[3]); }
+    }
+    text = text.replace(/[-–—,]+$/, '').trim();
+    if (!text) return null;
+    return { name: text.charAt(0).toUpperCase() + text.slice(1), qty, unit };
+  }
+  function parseIngredientLine(line) {
+    const t = String(line).replace(/^\s*([-*•]|\d+[.)])\s+/, '').trim();
+    return t ? splitQty(t) : null;
+  }
+  function parseIngredients(block) {
+    return String(block).split(/\r?\n/).map(parseIngredientLine).filter(Boolean);
+  }
+  function parseSteps(block) {
+    return String(block).split(/\r?\n/)
+      .map(s => s.replace(/^\s*(step\s*)?\d+[.):]?\s+/i, '').replace(/^\s*[-*•]\s+/, '').trim())
+      .filter(Boolean);
+  }
+
   // ---------- display helpers ----------
+  function fmtNum(n) {
+    n = Number(n);
+    if (Number.isInteger(n)) return String(n);
+    const whole = Math.floor(n);
+    const rest = n - whole;
+    const glyph = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾']].find(([v]) => Math.abs(v - rest) < 0.01);
+    if (glyph) return (whole ? whole : '') + glyph[1];
+    return String(Math.round(n * 100) / 100);
+  }
   function qtyLabel(i) {
     if (i.qty === null || i.qty === undefined || i.qty === '') return i.unit || '';
-    const n = Number(i.qty);
-    const num = Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-    return i.unit ? num + ' ' + i.unit : num;
+    const num = fmtNum(i.qty);
+    const PLURAL = { clove: 'cloves', cup: 'cups', tin: 'tins', jar: 'jars', bottle: 'bottles', bag: 'bags', slice: 'slices', handful: 'handfuls', pack: 'packs', loaf: 'loaves', bunch: 'bunches', pinch: 'pinches' };
+    const unit = Number(i.qty) > 1 && PLURAL[i.unit] ? PLURAL[i.unit] : i.unit;
+    return unit ? num + ' ' + unit : num;
+  }
+  function ingredientLine(i) {
+    const q = qtyLabel(i);
+    return q ? q + ' ' + i.name : i.name;
+  }
+  function formatMinutes(min) {
+    min = Number(min) || 0;
+    if (min < 60) return min + ' min';
+    const h = Math.floor(min / 60), m = min % 60;
+    return h + ' hr' + (m ? ' ' + m + ' min' : '');
+  }
+  function totalMinutes(r) {
+    return (Number(r.prepMin) || 0) + (Number(r.cookMin) || 0);
   }
   function frequencyOf(id) {
     return FREQUENCIES.find(f => f.id === (id || '')) || FREQUENCIES[3];
@@ -261,8 +314,45 @@ Larder.logic = (function () {
     });
     return changed ? { ...state, shopping } : state;
   }
+  // ---------- recipes ----------
+  function cleanRecipe(r) {
+    const n = v => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
+    const m = r.macros || {};
+    return {
+      ...r,
+      title: String(r.title || '').trim(),
+      servings: n(r.servings) || 1,
+      prepMin: n(r.prepMin) || 0,
+      cookMin: n(r.cookMin) || 0,
+      ingredients: (r.ingredients || []).map(i => ({ name: String(i.name).trim(), qty: n(i.qty), unit: i.unit || '' })).filter(i => i.name),
+      steps: (r.steps || []).map(s => String(s).trim()).filter(Boolean),
+      macros: { kcal: n(m.kcal), protein: n(m.protein), carbs: n(m.carbs), fat: n(m.fat) },
+      prepNote: String(r.prepNote || '').trim()
+    };
+  }
+  function addRecipe(state, recipe, today) {
+    const r = { id: uid(), createdAt: today || todayISO(), ...cleanRecipe(recipe) };
+    return { state: { ...state, recipes: [...state.recipes, r] }, id: r.id };
+  }
+  function updateRecipe(state, id, changes) {
+    return { ...state, recipes: state.recipes.map(r => (r.id === id ? cleanRecipe({ ...r, ...changes }) : r)) };
+  }
+  function deleteRecipe(state, id) {
+    return { ...state, recipes: state.recipes.filter(r => r.id !== id) };
+  }
+  function sortRecipes(list) {
+    return [...list].sort((a, b) => a.title.localeCompare(b.title));
+  }
+
   function emptyState() {
-    return { version: 1, example: false, pantry: [], history: [], shopping: [] };
+    return { version: 2, example: false, pantry: [], history: [], shopping: [], recipes: [] };
+  }
+  // Brings data saved by an older version up to date.
+  function migrate(state, exampleRecipes) {
+    let s = { ...emptyState(), ...state };
+    if (!Array.isArray(state.recipes)) s.recipes = s.example && exampleRecipes ? exampleRecipes() : [];
+    s.version = 2;
+    return s;
   }
 
   return {
@@ -270,8 +360,9 @@ Larder.logic = (function () {
     uid, todayISO, addDays, daysUntil, formatDate,
     expiryStatus, expiryLabel, sortByExpiry, expiringSoon,
     sameItem, findInPantry, guessCategory,
-    parseListLine, parseList,
-    qtyLabel, frequencyOf, dueDate, sortShopping,
+    parseListLine, parseList, parseIngredients, parseSteps,
+    qtyLabel, ingredientLine, formatMinutes, totalMinutes, frequencyOf, dueDate, sortShopping,
+    addRecipe, updateRecipe, deleteRecipe, sortRecipes, migrate,
     addPantryItem, updatePantryItem, deletePantryItem, markUsed, restoreUsed,
     addShoppingItem, updateShoppingItem, deleteShoppingItem, buyShoppingItem,
     refreshDue, emptyState

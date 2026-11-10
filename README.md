@@ -2,8 +2,8 @@
 
 A grocery app for personal recipes, suggestions and diet tracking. It runs in your browser, works offline, and needs no account.
 
-**Stage 1 (this version):** Pantry and Shopping list.
-Later stages: recipes, suggestions from what's in the pantry, daily targets, and weekend prep notes.
+**Done so far:** Pantry, Shopping list, and Recipes (with weekend prep notes).
+Next stages: recipe suggestions from what's in the pantry, and daily calorie and protein targets.
 
 ## Run it
 
@@ -39,6 +39,14 @@ The first time you open the app it loads **example data**, dated from today so y
 - Items you already have at home are marked with what's in the pantry, so you don't buy twice.
 - Tap the circle when you've bought something. It moves into the pantry, and the message lets you set its use-by date.
 - Bought items wait under **Bought**. If you set how often you buy them, they come back onto the list on their own when they're due. You can also tap **Add back**.
+
+**Recipes**
+- Add your own recipes with a title, servings, prep and cook time, ingredients, method steps and per-serving macros (calories, protein, carbs, fat). Macros are entered by hand.
+- Type ingredients one per line, such as `500 g chicken thighs`, `2 cloves garlic` or `½ tsp salt`. The app splits each line into quantity, unit and name. Fractions like `1/2` and `1 1/2` work too.
+- Type the method one step per line. Numbers like `1.` or `Step 2:` at the start are removed, since the app numbers the steps for you.
+- Each recipe can have a weekend prep note: what to chop, cook or portion ahead, and how long it keeps. It's plain text you can edit.
+- Opening a recipe shows its times (prep, cook and total), macros per serving, ingredients, method and prep note.
+- Search matches recipe titles and ingredients.
 
 ## Code layout
 

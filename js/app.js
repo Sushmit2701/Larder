@@ -5,7 +5,8 @@
 
   let state;
   let view = 'pantry';
-  const ui = { q: '', cat: '' };
+  const VIEWS = ['pantry', 'shopping', 'recipes'];
+  const ui = { q: '', cat: '', rq: '', recipeId: null };
   let undoSnapshot = null;
   let toastTimer = null;
   let clearArmed = null;
@@ -18,11 +19,12 @@
 
   // ---------- state ----------
   function init() {
-    state = S.load() || Larder.seed.create(today());
+    const saved = S.load();
+    state = saved ? L.migrate(saved, () => Larder.seed.recipes(today())) : Larder.seed.create(today());
     state = L.refreshDue(state, today());
     S.save(state);
     const v = S.getPref('view', 'pantry');
-    if (v === 'pantry' || v === 'shopping') view = v;
+    if (VIEWS.includes(v)) view = v;
     bind();
     render();
   }
@@ -54,7 +56,158 @@
     });
     $('#count-pantry').textContent = state.pantry.length;
     $('#count-shopping').textContent = state.shopping.filter(s => s.needed).length;
-    $('#main').innerHTML = view === 'pantry' ? renderPantry() : renderShopping();
+    $('#count-recipes').textContent = state.recipes.length;
+    if (ui.recipeId && !state.recipes.some(r => r.id === ui.recipeId)) ui.recipeId = null;
+    $('#main').innerHTML = view === 'pantry' ? renderPantry()
+      : view === 'shopping' ? renderShopping()
+      : ui.recipeId ? renderRecipeDetail(ui.recipeId) : renderRecipes();
+  }
+
+  // ---------- recipes ----------
+  function macroText(r) {
+    const m = r.macros || {};
+    return [m.kcal != null ? m.kcal + ' kcal' : '', m.protein != null ? m.protein + ' g protein' : ''].filter(Boolean).join(' · ');
+  }
+
+  function renderRecipes() {
+    const q = ui.rq.trim().toLowerCase();
+    return `${exampleBanner()}
+      <div class="toolbar">
+        <input id="recipe-search" type="search" placeholder="Search recipes or ingredients" value="${esc(ui.rq)}" aria-label="Search recipes" autocomplete="off">
+        <button class="btn primary" data-action="new-recipe">Add recipe</button>
+      </div>
+      <ul class="list" id="recipe-list">${renderRecipeRows(q)}</ul>`;
+  }
+
+  function renderRecipeRows(q) {
+    if (!state.recipes.length) return `<li class="empty">No recipes yet. Add your first one with its ingredients, method and macros.</li>`;
+    const list = L.sortRecipes(state.recipes).filter(r => !q
+      || r.title.toLowerCase().includes(q)
+      || r.ingredients.some(i => i.name.toLowerCase().includes(q)));
+    if (!list.length) return `<li class="empty">No recipes match that search.</li>`;
+    return list.map(r => `<li class="row">
+      <button class="row-main" data-action="open-recipe" data-id="${r.id}">
+        <span class="row-name">${esc(r.title)}</span>
+        <span class="row-meta">${esc([L.formatMinutes(L.totalMinutes(r)), 'Serves ' + r.servings, r.ingredients.length + ' ingredients'].join(' · '))}</span>
+      </button>
+      ${macroText(r) ? `<span class="macro-tag">${esc(macroText(r))}</span>` : ''}
+    </li>`).join('');
+  }
+
+  function renderRecipeDetail(id) {
+    const r = state.recipes.find(x => x.id === id);
+    const m = r.macros || {};
+    const fig = (v, unit, label) => `<div class="macro"><span class="macro-n">${v == null ? '–' : esc(v)}<small>${v == null ? '' : unit}</small></span><span class="macro-l">${label}</span></div>`;
+    return `<article class="recipe">
+      <div class="recipe-nav">
+        <button class="btn small" data-action="back-recipes">‹ All recipes</button>
+        <button class="btn small" data-action="edit-recipe" data-id="${r.id}">Edit</button>
+      </div>
+      <header class="recipe-head">
+        <h2>${esc(r.title)}</h2>
+        <dl class="times">
+          <div><dt>Prep</dt><dd>${esc(L.formatMinutes(r.prepMin))}</dd></div>
+          <div><dt>Cook</dt><dd>${esc(L.formatMinutes(r.cookMin))}</dd></div>
+          <div class="total"><dt>Total</dt><dd>${esc(L.formatMinutes(L.totalMinutes(r)))}</dd></div>
+          <div><dt>Serves</dt><dd>${esc(r.servings)}</dd></div>
+        </dl>
+      </header>
+      <section class="panel" aria-labelledby="macros-h">
+        <h3 id="macros-h">Per serving</h3>
+        <div class="macros">
+          ${fig(m.kcal, '', 'kcal')}${fig(m.protein, ' g', 'protein')}${fig(m.carbs, ' g', 'carbs')}${fig(m.fat, ' g', 'fat')}
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="ing-h">
+        <h3 id="ing-h">Ingredients</h3>
+        ${r.ingredients.length ? `<ul class="ingredients">${r.ingredients.map(i => `<li><span class="ing-qty">${esc(L.qtyLabel(i))}</span><span>${esc(i.name)}</span></li>`).join('')}</ul>` : '<p class="muted">No ingredients added.</p>'}
+      </section>
+      <section class="panel" aria-labelledby="method-h">
+        <h3 id="method-h">Method</h3>
+        ${r.steps.length ? `<ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : '<p class="muted">No steps added.</p>'}
+      </section>
+      ${r.prepNote ? `<section class="panel prep" aria-labelledby="prep-h">
+        <h3 id="prep-h">Weekend prep</h3>
+        <p>${esc(r.prepNote).replace(/\n/g, '<br>')}</p>
+      </section>` : ''}
+    </article>`;
+  }
+
+  function openRecipeEditor(id) {
+    const r = id ? state.recipes.find(x => x.id === id) : null;
+    const v = r || { title: '', servings: 2, prepMin: '', cookMin: '', ingredients: [], steps: [], macros: {}, prepNote: '' };
+    const m = v.macros || {};
+    const dlg = $('#editor');
+    const num = (fid, label, val, extra) => `<label class="field"><span>${label}</span><input id="${fid}" type="number" inputmode="numeric" min="0" step="any" value="${esc(val ?? '')}" ${extra || ''}></label>`;
+    dlg.innerHTML = `<form id="recipe-form" class="sheet" novalidate>
+      <h2>${r ? 'Edit recipe' : 'New recipe'}</h2>
+      <label class="field"><span>Title</span>
+        <input id="r-title" required value="${esc(v.title)}" autocomplete="off" placeholder="e.g. Lemon chicken traybake"></label>
+      <div class="field-row three">
+        ${num('r-servings', 'Servings', v.servings)}
+        ${num('r-prep', 'Prep (min)', v.prepMin)}
+        ${num('r-cook', 'Cook (min)', v.cookMin)}
+      </div>
+      <label class="field"><span>Ingredients, one per line</span>
+        <textarea id="r-ingredients" rows="6" placeholder="500 g chicken thighs&#10;2 tbsp olive oil&#10;1 lemon">${esc(v.ingredients.map(L.ingredientLine).join('\n'))}</textarea></label>
+      <label class="field"><span>Method, one step per line</span>
+        <textarea id="r-steps" rows="6" placeholder="Heat the oven to 200°C.&#10;Toss everything in a roasting tin.">${esc(v.steps.join('\n'))}</textarea></label>
+      <fieldset class="field-group">
+        <legend>Per serving</legend>
+        <div class="field-row four">
+          ${num('r-kcal', 'Calories', m.kcal)}
+          ${num('r-protein', 'Protein (g)', m.protein)}
+          ${num('r-carbs', 'Carbs (g)', m.carbs)}
+          ${num('r-fat', 'Fat (g)', m.fat)}
+        </div>
+      </fieldset>
+      <label class="field"><span>Weekend prep note</span>
+        <textarea id="r-prepnote" rows="3" placeholder="What can be chopped, cooked or portioned ahead, and how long it keeps.">${esc(v.prepNote)}</textarea></label>
+      <p class="form-error" id="r-error" hidden>Give the recipe a title.</p>
+      <div class="sheet-actions">
+        ${r ? `<button type="button" class="btn danger-text" data-action="delete">Delete</button>` : ''}
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-action="cancel">Cancel</button>
+        <button type="submit" class="btn primary">${r ? 'Save' : 'Add recipe'}</button>
+      </div>
+    </form>`;
+    const form = $('#recipe-form');
+    form.addEventListener('click', e => {
+      const b = e.target.closest('button[data-action]');
+      if (!b) return;
+      if (b.dataset.action === 'cancel') dlg.close();
+      if (b.dataset.action === 'delete') {
+        dlg.close();
+        ui.recipeId = null;
+        commit(L.deleteRecipe(state, id), `Deleted ${r.title}`, { undoable: true });
+      }
+    });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const title = $('#r-title').value.trim();
+      if (!title) { $('#r-error').hidden = false; $('#r-title').focus(); return; }
+      const data = {
+        title,
+        servings: $('#r-servings').value,
+        prepMin: $('#r-prep').value,
+        cookMin: $('#r-cook').value,
+        ingredients: L.parseIngredients($('#r-ingredients').value),
+        steps: L.parseSteps($('#r-steps').value),
+        macros: { kcal: $('#r-kcal').value, protein: $('#r-protein').value, carbs: $('#r-carbs').value, fat: $('#r-fat').value },
+        prepNote: $('#r-prepnote').value
+      };
+      dlg.close();
+      if (r) {
+        commit(L.updateRecipe(state, id, data), 'Saved');
+      } else {
+        const res = L.addRecipe(state, data, today());
+        ui.recipeId = res.id;
+        commit(res.state, `Added ${title}`);
+        window.scrollTo(0, 0);
+      }
+    });
+    dlg.showModal();
+    if (!r) $('#r-title').focus();
   }
 
   function exampleBanner() {
@@ -325,6 +478,7 @@
   function bind() {
     document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
       view = t.dataset.view;
+      if (view === 'recipes') ui.recipeId = null;
       S.setPref('view', view);
       render();
       window.scrollTo(0, 0);
@@ -340,6 +494,10 @@
         case 'edit-pantry': openEditor('pantry', id); break;
         case 'edit-shop': openEditor('shopping', id); break;
         case 'import': openImporter(); break;
+        case 'new-recipe': openRecipeEditor(); break;
+        case 'edit-recipe': openRecipeEditor(id); break;
+        case 'open-recipe': ui.recipeId = id; render(); window.scrollTo(0, 0); break;
+        case 'back-recipes': ui.recipeId = null; render(); window.scrollTo(0, 0); break;
         case 'use': {
           const item = state.pantry.find(p => p.id === id);
           commit(L.markUsed(state, id, today()), `${item.name} used up`, { undoable: true });
@@ -377,6 +535,7 @@
 
     main.addEventListener('input', e => {
       if (e.target.id === 'pantry-search') { ui.q = e.target.value; $('#pantry-list').innerHTML = renderPantryRows(); }
+      if (e.target.id === 'recipe-search') { ui.rq = e.target.value; $('#recipe-list').innerHTML = renderRecipeRows(ui.rq.trim().toLowerCase()); }
     });
     main.addEventListener('change', e => {
       if (e.target.id === 'pantry-cat') { ui.cat = e.target.value; $('#pantry-list').innerHTML = renderPantryRows(); }
